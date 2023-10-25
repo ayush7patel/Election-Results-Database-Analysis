@@ -1,0 +1,664 @@
+Part 1 (10%)
+
+1. The Functional Dependencies: 
+precinct -> geo, locality, state
+precinct, timestamp -> geo, locality, state, totalvotes, Biden, Trump
+
+2. Penna is not in BCNF, and can be decomposed into 2 tables that are in the BCNF scheme. 
+Table #1 which includes (precinct, state, locality, and geo) 
+- CREATE TABLE Location AS (SELECT precinct, state, locality, geo FROM
+    penna
+GROUP BY precinct)
+
+Table #2 which includes (precinct, timestamp, totalvotes, Biden, Trump, and filestamp) 
+- CREATE TABLE Votes AS (SELECT DISTINCT precinct, p.timestamp, totalvotes, Biden, Trump, filestamp FROM
+    penna p)
+
+The "precinct" column in the "Location" table is the PRIMARY KEY in the "Location" table.
+The "precinct" column in the "Votes" table is the FOREIGN KEY in the "Votes" table. 
+
+Part 2 (50%)
+
+1) The Precinct:
+
+1a) Winner(precinct):
+DROP PROCEDURE IF EXISTS Winner
+DELIMITER $$
+CREATE PROCEDURE Winner(IN precinctName VARCHAR(255))
+BEGIN 
+SELECT 
+    IF(SUM(Trump) > SUM(Biden),
+        'Trump',
+        'Biden') AS Winner,
+    IF(SUM(Trump) > SUM(Biden),
+        SUM(Trump),
+        SUM(Biden)) AS totalVotes,
+    IF(SUM(Trump) > SUM(Biden),
+        (SUM(Trump) / SUM(totalvotes) * 100),
+        (SUM(Biden) / SUM(totalvotes) * 100)) AS percentageTotalVotes
+FROM
+    penna
+WHERE
+    precinct = precinctName; 
+END $$
+DELIMITER ;
+
+1b) RankAll(precinct):
+DROP PROCEDURE IF EXISTS RankAll
+DELIMITER $$
+CREATE PROCEDURE RankALL(IN precinctName VARCHAR(255))
+BEGIN 
+SELECT voteRank 
+FROM (
+SELECT 
+    precinct, 
+    RANK () OVER (
+        ORDER BY totalvotes DESC
+    ) voteRank
+FROM
+    penna L1, (SELECT DISTINCT timestamp
+FROM penna
+ORDER BY timestamp DESC LIMIT 1) L2
+WHERE
+    L1.timestamp = L2.timestamp) L3
+WHERE L3.precinct = precinctName;
+END $$
+DELIMITER ;
+
+1c) RankCounty(precinct):
+DROP PROCEDURE IF EXISTS RankCounty
+DELIMITER $$
+CREATE PROCEDURE RankCounty(IN precinctName VARCHAR(255))
+BEGIN 
+SELECT voteRank 
+FROM (
+SELECT 
+    L1.precinct,
+    RANK () OVER (
+        ORDER BY L1.totalvotes DESC
+    ) voteRank
+FROM
+    penna L1, (SELECT DISTINCT timestamp
+FROM penna
+ORDER BY timestamp DESC LIMIT 1) L2, (SELECT * FROM penna WHERE precinct = precinctName LIMIT 1) L4
+WHERE
+    L1.timestamp = L2.timestamp and L1.locality = L4.locality) L3
+WHERE L3.precinct = precinctName;
+END $$
+DELIMITER ;
+
+1d) PlotPrecinct(precinct):
+DROP PROCEDURE IF EXISTS PlotPrecinct
+DELIMITER $$
+CREATE PROCEDURE PlotPrecinct(IN precinctName VARCHAR(255))
+BEGIN
+SELECT timestamp, Biden, Trump, Totalvotes
+FROM penna
+WHERE precinct = precinctName;
+END $$
+DELIMITER ;
+
+1e) EarliestPrecinct(vote_count): 
+DROP PROCEDURE IF EXISTS EarliestPrecinct
+DELIMITER $$
+CREATE PROCEDURE EarliestPrecinct(IN voteCount INT)
+BEGIN 
+SELECT L1.precinct, MAX(L1.totalvotes) AS totalVotes
+FROM penna L1, (
+SELECT *
+FROM penna
+WHERE totalvotes > voteCount
+ORDER BY timestamp ASC
+LIMIT 1) L2
+WHERE L1.timestamp = L2.timestamp;
+END $$
+DELIMITER ;
+
+2) The Candidates: 
+
+2a) PrecinctsWon(candidate): 
+DROP PROCEDURE IF EXISTS PrecinctsWon
+DELIMITER $$
+CREATE PROCEDURE PrecinctsWon(IN candidate VARCHAR(255))
+BEGIN 
+    IF(candidate = 'Biden') THEN 
+        SELECT precinct, SUM(Biden), SUM(Biden) - SUM(Trump) AS voteDiff
+        FROM penna
+        GROUP BY precinct 
+        HAVING SUM(Biden) > SUM(Trump)
+        ORDER BY voteDiff DESC;
+    END IF;
+    IF(candidate = 'Trump') THEN 
+        SELECT precinct, SUM(Trump), SUM(Trump) - SUM(Biden) AS voteDiff
+        FROM penna
+        GROUP BY precinct
+        HAVING SUM(Trump) > SUM(Biden)
+        ORDER BY voteDiff DESC;
+    END IF;
+END $$
+DELIMITER ;
+
+2b) PrecinctsWonCount(candidate): 
+DROP PROCEDURE IF EXISTS PrecinctsWonCount
+DELIMITER $$
+CREATE PROCEDURE PrecinctsWonCount(IN candidate VARCHAR(255))
+BEGIN 
+    IF(candidate = 'Biden') THEN 
+        SELECT count(DISTINCT L1.precinct) AS 'Precincts Won by Biden'
+        FROM (SELECT precinct, SUM(Biden)  
+        FROM penna
+        WHERE timestamp = '2020-11-11 21:50:46'
+        GROUP BY precinct
+        HAVING SUM(Biden) > SUM(Trump)) L1;
+    END IF;
+    IF(candidate = 'Trump') THEN 
+        SELECT count(DISTINCT L1.precinct) AS 'Precincts Won by Trump'
+        FROM (SELECT precinct, SUM(Trump)
+        FROM penna
+        WHERE timestamp = '2020-11-11 21:50:46'
+        GROUP BY precinct
+        HAVING SUM(Trump) > SUM(Biden)) L1;
+    END IF;
+END $$
+DELIMITER ;
+
+2c) PrecinctsFullLead(candidate): 
+DROP PROCEDURE IF EXISTS PrecinctsFullLead
+DELIMITER $$
+CREATE PROCEDURE PrecinctsFullLead(IN candidate VARCHAR(255))
+BEGIN
+	IF candidate = 'Biden' THEN
+		SELECT DISTINCT precinct
+		FROM penna 
+		GROUP BY precinct, timestamp
+        	HAVING SUM(Biden) > SUM(Trump);  
+	END IF; 
+	IF candidate = 'Trump' THEN
+		SELECT DISTINCT precinct
+		FROM penna 
+		GROUP BY precinct, timestamp
+        	HAVING SUM(Biden) < SUM(Trump); 
+	END IF ;
+END $$
+DELIMITER ;
+
+2d) PlotCandidate(candidate): 
+DROP PROCEDURE IF EXISTS PlotCandidate
+DELIMITER $$
+CREATE PROCEDURE PlotCandidate(IN candidate VARCHAR(255))
+BEGIN
+    IF candidate = "Biden" THEN
+	SELECT timestamp, SUM(Biden) FROM penna GROUP BY timestamp;
+    ELSEIF candidate = "Trump" THEN
+	SELECT timestamp, SUM(Trump) FROM penna GROUP BY timestamp;
+    END IF ;
+END $$
+DELIMITER ;
+
+2e) PrecinctsWonCategory(): 
+DROP PROCEDURE IF EXISTS PrecinctsWonTownships
+DELIMITER $$
+CREATE PROCEDURE PrecinctsWonTownships()
+BEGIN 
+    SELECT SUM(Biden), SUM(Trump), ABS(SUM(Biden) - SUM(Trump)) AS voteDiff, SUM(Biden) > SUM(Trump) AS '1 if Biden wins, 0 if Trump wins'
+    FROM (SELECT timestamp 
+    FROM Penna
+    ORDER BY timestamp DESC
+    LIMIT 1) L1, Penna L2
+    WHERE L2.timestamp = L1.timestamp AND precinct LIKE "%Township%";
+END $$
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS PrecinctsWonBoroughs
+DELIMITER $$
+CREATE PROCEDURE PrecinctsWonBoroughs()
+BEGIN 
+    SELECT SUM(Biden), SUM(Trump), ABS(SUM(Biden) - SUM(Trump)) AS voteDiff, SUM(Biden) > SUM(Trump) AS '1 if Biden wins, 0 if Trump wins'
+    FROM (SELECT timestamp 
+    FROM Penna
+    ORDER BY timestamp DESC
+    LIMIT 1) L1, Penna L2
+    WHERE L2.timestamp = L1.timestamp AND precinct LIKE "%Borough%";
+END $$
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS PrecinctsWonWards
+DELIMITER $$
+CREATE PROCEDURE PrecinctsWonWards()
+BEGIN 
+    SELECT SUM(Biden), SUM(Trump), ABS(SUM(Biden) - SUM(Trump)) AS voteDiff, SUM(Biden) > SUM(Trump) AS '1 if Biden wins, 0 if Trump wins'
+    FROM (SELECT timestamp 
+    FROM Penna
+    ORDER BY timestamp DESC
+    LIMIT 1) L1, Penna L2
+    WHERE L2.timestamp = L1.timestamp AND precinct LIKE "%Ward%";
+END $$
+DELIMITER ; 
+
+3) The Timestamp: 
+
+3a) TotalVotes(timestamp, category): 
+DROP PROCEDURE IF EXISTS TotalVotes
+DELIMITER $$
+CREATE PROCEDURE TotalVotes(IN timeSt VARCHAR(255), IN category VARCHAR(255))
+BEGIN 
+    IF(category = 'ALL') THEN
+        SELECT precinct, SUM(totalvotes) AS orderAll
+        FROM penna
+        WHERE timestamp = timeSt
+        GROUP BY precinct
+        ORDER BY orderAll; 
+    END IF;
+    IF(category = 'Biden') THEN
+        SELECT precinct, SUM(Biden) AS orderBiden
+        FROM penna
+        WHERE timestamp = timeSt
+        GROUP BY precinct
+        ORDER BY orderBiden;
+    END IF;
+    IF(category = 'Trump') THEN
+        SELECT precinct, SUM(Trump) AS orderTrump 
+        FROM penna
+        WHERE timestamp = timeSt
+        GROUP BY precinct
+        ORDER BY orderTrump; 
+    END IF;
+END $$
+DELIMITER ;
+
+3b) GainDelta(timestamp):
+DROP PROCEDURE IF EXISTS GainDelta
+DELIMITER $$
+CREATE PROCEDURE GainDelta(IN timeSt VARCHAR(255))
+BEGIN 
+    IF(timeSt = (SELECT timestamp
+    FROM penna
+    ORDER BY timestamp ASC
+    LIMIT 1)) THEN
+    SELECT 'No prior timestamp';
+    ELSE 
+    SELECT (L3.tstamptotal - L4.tstamptotal) AS 'Gain', (TIMESTAMPDIFF(SECOND, L4.timestamp, timeSt)) AS 'Delta', (L3.tstamptotal - L4.tstamptotal) / (TIMESTAMPDIFF(SECOND, L4.timestamp, timeSt)) AS 'GainDelta'
+    FROM (select L2.timestamp, SUM(totalvotes) AS tstamptotal
+    FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < timeSt
+ORDER BY timestamp DESC
+LIMIT 1) L2
+    WHERE L1.timestamp = L2.timestamp) L4, (SELECT SUM(totalvotes) AS tstamptotal
+    FROM penna 
+    WHERE timestamp = timeSt) L3;
+    END IF;
+END $$
+DELIMITER ;
+
+3c) RankTimestamp(): 
+DROP TABLE IF EXISTS TST;
+DROP PROCEDURE IF EXISTS RankTimestamp;
+DELIMITER $$
+CREATE TABLE TST AS (SELECT DISTINCT timestamp, SUM(totalvotes) AS totalVote FROM
+    penna
+GROUP BY timestamp); 
+CREATE PROCEDURE RankTimestamp()
+BEGIN 
+	SELECT (L1.totalVote - L2.totalVote) / (TIMESTAMPDIFF(SECOND, L2.timestamp, L1.timestamp)) AS GainDelta, RANK () OVER (ORDER BY (L1.totalVote - L2.totalVote) / (TIMESTAMPDIFF(SECOND, L2.timestamp, L1.timestamp)) DESC) AS GainDeltaRatioRank
+    FROM TST L1, TST L2
+    WHERE L2.timestamp < L1.timestamp AND NOT (L1.timestamp LIKE '2020-11-03%' AND L2.timestamp LIKE '2020-11-03%')
+    GROUP BY L1.timestamp; 
+END $$
+DELIMITER ;
+
+3d) VotesPerDay(day):
+DROP PROCEDURE IF EXISTS VotesPerDay
+DELIMITER $$
+CREATE PROCEDURE VotesPerDay(IN days INT)
+BEGIN 
+	IF(days = 3) THEN
+		SELECT SUM(totalvotes) AS Day3Votes, SUM(Biden) AS Day3Biden, SUM(Trump) AS Day3Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-04 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 4) THEN
+		SELECT SUM(totalvotes) - L3.Day3Votes AS Day4Votes, SUM(Biden) - L3.Day3Biden AS Day4Biden, SUM(Trump) - L3.Day3Trump AS Day4Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-04 00:00:00' AND timestamp < '2020-11-05 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day3Votes, SUM(Biden) AS Day3Biden, SUM(Trump) AS Day3Trump
+        FROM penna L1, (select DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-04 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 5) THEN
+		SELECT SUM(totalvotes) - L3.Day4Votes AS Day5Votes, SUM(Biden) - L3.Day4Biden AS Day5Biden, SUM(Trump) - L3.Day4Trump AS Day5Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-05 00:00:00' AND timestamp < '2020-11-06 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day4Votes, SUM(Biden) AS Day4Biden, SUM(Trump) AS Day4Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-05 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+     
+	ELSEIF(days = 6) THEN
+		SELECT SUM(totalvotes) - L3.Day5Votes AS Day6Votes, SUM(Biden) - L3.Day5Biden AS Day6Biden, SUM(Trump) - L3.Day5Trump AS Day6Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-06 00:00:00' AND timestamp < '2020-11-07 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day5Votes, SUM(Biden) AS Day5Biden, SUM(Trump) AS Day5Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-06 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 7) THEN
+		SELECT SUM(totalvotes) - L3.Day6Votes AS Day7Votes, SUM(Biden) - L3.Day6Biden AS Day7Biden, SUM(Trump) - L3.Day6Trump AS Day7Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-07 00:00:00' AND timestamp < '2020-11-08 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day6Votes, SUM(Biden) AS Day6Biden, SUM(Trump) AS Day6Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-07 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 8) THEN
+		SELECT SUM(totalvotes) - L3.Day7Votes AS Day8Votes, SUM(Biden) - L3.Day7Biden AS Day8Biden, SUM(Trump) - L3.Day7Trump AS Day8Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-08 00:00:00' AND timestamp < '2020-11-09 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day7Votes, SUM(Biden) as Day7Biden, SUM(Trump) as Day7Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-08 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 9) THEN
+		SELECt SUM(totalvotes) - L3.Day8Votes AS Day9Votes, SUM(Biden) - L3.Day8Biden AS Day9Biden, SUM(Trump) - L3.Day8Trump AS Day9Trump
+        FROM penna L1, (select DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-09 00:00:00' AND timestamp < '2020-11-09 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day8Votes, SUM(Biden) AS Day8Biden, SUM(Trump) AS Day8Trump
+        FROM penna L1, (select DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-09 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 10) THEN
+		SELECT SUM(totalvotes) - L3.Day9Votes AS Day10Votes, SUM(Biden) - L3.Day9Biden AS Day10Biden, SUM(Trump) - L3.Day9Trump AS Day10Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-10 00:00:00' AND timestamp < '2020-11-11 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day9Votes, SUM(Biden) AS Day9Biden, SUM(Trump) AS Day9Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-10 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+        
+	ELSEIF(days = 11) THEN
+		SELECT SUM(totalvotes) - L3.Day10Votes AS Day11Votes, SUM(Biden) - L3.Day10Biden AS Day11Biden, SUM(Trump) - L3.Day10Trump AS Day11Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp >= '2020-11-11 00:00:00' AND timestamp < '2020-11-11 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2, (SELECT SUM(totalvotes) AS Day10Votes, SUM(Biden) AS Day10Biden, SUM(Trump) AS Day10Trump
+        FROM penna L1, (SELECT DISTINCT timestamp
+FROM penna
+WHERE timestamp < '2020-11-11 00:00:00' ORDER BY timestamp DESC LIMIT 1) L2
+        WHERE L1.timestamp = L2.timestamp) L3
+        WHERE L1.timestamp = L2.timestamp;
+	ELSE
+		SELECT 'Wrong input date';
+    END IF;
+END $$
+DELIMITER ;
+
+4) Suspicious or Interesting Data: 
+
+SELECT 
+    L1.precinct, L1.timestamp, L1.totalvotes
+FROM
+    penna L1,
+    (SELECT 
+        precinct, timestamp, totalvotes
+    FROM
+        penna) L2
+WHERE
+    L1.totalvotes < L2.totalvotes
+        AND L1.precinct = 'Lower Merion 12-2'
+        AND L2.precinct = 'Lower Merion 12-2'
+ORDER BY timestamp ASC; 
+
+Results: 
+Lower Merion 12-2	2020-11-04 02:52:59	137
+Lower Merion 12-2	2020-11-04 02:48:21	137
+Lower Merion 12-2	2020-11-04 03:28:32	137
+Lower Merion 12-2	2020-11-04 02:46:36	137 **
+Lower Merion 12-2	2020-11-04 04:00:31	124 **
+Lower Merion 12-2	2020-11-04 05:01:47	124
+Lower Merion 12-2	2020-11-04 03:01:12	137
+Lower Merion 12-2	2020-11-04 04:02:32	124
+Lower Merion 12-2	2020-11-04 02:16:40	137
+Lower Merion 12-2	2020-11-04 01:20:49	0
+Lower Merion 12-2	2020-11-04 01:56:46	137
+Lower Merion 12-2	2020-11-04 04:35:50	124
+
+I chose this because the totalvotes went down as timestamp increased, which was stragne. 
+Usually votes should increase over time as more people vote, but the votes decreased. Where did they go?
+
+Part 3 (10%)
+
+a)
+SELECT DISTINCT
+    'True' AS 'nonempty'
+FROM
+    penna p
+WHERE
+    EXISTS( SELECT 
+            *
+        FROM
+            penna p
+        HAVING Biden + Trump < totalvotes) 
+UNION SELECT DISTINCT
+    'False' AS 'nonempty'
+FROM
+    penna p2
+WHERE
+    NOT EXISTS( SELECT 
+            *
+        FROM
+            penna p
+        HAVING Biden + Trump < totalvotes);
+
+b)
+SELECT DISTINCT
+    'True' AS 'nonempty'
+FROM
+    penna p
+WHERE
+    NOT EXISTS( SELECT 
+            *
+        FROM
+            penna p
+        WHERE
+            Timestamp < '2020-11-3 19:39:48'
+                AND Timestamp > '2020-11-11 21:50:46') 
+UNION SELECT DISTINCT
+    'False' AS 'nonempty'
+FROM
+    penna p2
+WHERE
+    EXISTS( SELECT 
+            *
+        FROM
+            penna p
+        WHERE
+            Timestamp < '2020-11-3 19:39:48'
+                AND Timestamp > '2020-11-11 21:50:46');
+
+c)
+SELECT DISTINCT
+    'True' AS 'nonempty'
+FROM
+    penna p
+WHERE
+    NOT EXISTS( SELECT 
+            p.totalvotes, p.Biden, p.Trump, p.precinct, p.timestamp 
+        FROM
+            penna p , (SELECT totalvotes, Biden, Trump, precinct, timestamp from penna where timestamp = '2020-11-05 00:00:00') L2
+        WHERE
+            p.timestamp > '2020-11-05 00:00:00' AND p.totalvotes < L2.totalvotes AND p.Biden < L2.Biden AND p.Trump < L2.Trump)
+UNION SELECT DISTINCT
+    'False' AS 'nonempty'
+FROM
+    penna p2
+WHERE
+    EXISTS( SELECT 
+            p.totalvotes, p.Biden, p.Trump, p.precinct, p.timestamp 
+        FROM
+            penna p , (SELECT totalvotes, Biden, Trump, precinct, timestamp from penna where timestamp = '2020-11-05 00:00:00') L2
+        WHERE
+            p.timestamp > '2020-11-05 00:00:00' AND p.totalvotes < L2.totalvotes AND p.Biden < L2.Biden AND p.Trump < L2.Trump);
+
+
+Part 4 (30%) 
+
+Tables: 
+CREATE TABLE UpdatedTuplesLocation (
+    precinct VARCHAR(255),
+    state TEXT,
+    locality TEXT,
+    geo TEXT
+);
+
+CREATE TABLE InsertedTuplesLocation (
+    precinct VARCHAR(255),
+    state TEXT,
+    locality TEXT,
+    geo TEXT
+);
+
+CREATE TABLE DeletedTuplesLocation (
+    precinct VARCHAR(255),
+    state TEXT,
+    locality TEXT,
+    geo TEXT
+); 
+
+CREATE TABLE UpdatedTuplesVotes (
+    precinct VARCHAR(255),
+    timestamp TEXT,
+    totalvotes INT,
+    Biden INT,
+    Trump INT,
+    filestamp TEXT
+); 
+
+CREATE TABLE InsertedTuplesVotes (
+    precinct VARCHAR(255),
+    timestamp TEXT,
+    totalvotes INT,
+    Biden INT,
+    Trump INT,
+    filestamp TEXT
+); 
+
+CREATE TABLE DeletedTuplesVotes (
+    precinct VARCHAR(255),
+    timestamp TEXT,
+    totalvotes INT,
+    Biden INT,
+    Trump INT,
+    filestamp TEXT
+); 
+
+4.1 Triggers and Update Driven Stored Procedures:
+a) 
+DROP TRIGGER IF EXISTS update_location 
+DELIMITER $$
+CREATE TRIGGER update_location 
+BEFORE UPDATE ON locationcopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO updatedtupleslocation 
+VALUES(OLD.precinct, OLD.state, OLD.locality, OLD.geo); 
+END $$
+DELIMITER ; 
+
+DROP TRIGGER IF EXISTS insert_location 
+DELIMITER $$
+CREATE TRIGGER insert_location 
+AFTER INSERT ON locationcopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO insertedtupleslocation
+VALUES(NEW.precinct, NEW.state, NEW.locality, NEW.geo); 
+END $$
+DELIMITER ; 
+
+DROP TRIGGER IF EXISTS delete_location 
+DELIMITER $$
+CREATE TRIGGER delete_location 
+AFTER DELETE ON locationcopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO deletedtupleslocation
+VALUES(OLD.precinct, OLD.state, OLD.locality, OLD.geo); 
+END $$
+DELIMITER ; 
+
+DROP TRIGGER IF EXISTS update_votes 
+DELIMITER $$
+CREATE TRIGGER update_votes 
+BEFORE UPDATE ON votescopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO updatedtuplesvotes 
+VALUES(OLD.precinct, OLD.timestamp, OLD.totalvotes, OLD.Biden, OLD.Trump, OLD.filestamp); 
+END $$
+DELIMITER ; 
+
+DROP TRIGGER IF EXISTS insert_votes 
+DELIMITER $$
+CREATE TRIGGER insert_votes 
+AFTER INSERT ON votescopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO insertedtuplesvotes
+VALUES(NEW.precinct, NEW.timestamp, NEW.totalvotes, NEW.Biden, NEW.Trump, NEW.filestamp); 
+END $$
+DELIMITER ; 
+
+DROP TRIGGER IF EXISTS delete_votes  
+DELIMITER $$
+CREATE TRIGGER delete_votes 
+AFTER DELETE ON votescopy
+FOR EACH ROW
+BEGIN 
+INSERT INTO deletedtuplesvotes
+VALUES(OLD.precinct, OLD.timestamp, OLD.totalvotes, OLD.Biden, OLD.Trump, OLD.filestamp); 
+END $$
+DELIMITER ; 
+    
+4.2 Stored Procedures: 
+
+DROP PROCEDURE IF EXISTS MoveVotes 
+DELIMITER $$
+CREATE PROCEDURE MoveVotes(IN precinctName VARCHAR(255), IN Timest TEXT, IN CoreCandidate VARCHAR(255), IN numberOfMovedVotes INT)
+BEGIN
+	IF (precinctName NOT IN (SELECT DISTINCT precinct from penna)) THEN
+        SELECT "Unknown Precinct" AS "Error Input";
+    ELSEIF (Timest NOT IN (SELECT DISTINCT timestamp from penna)) THEN
+        SELECT "Unknown Timestamp" AS "Error Input";
+	ELSEIF (CoreCandidate = 'Biden') THEN 
+		SELECT precinct, L1.timestamp, (Biden - numberOfMovedVotes) AS newRemovedBidenVotes, (Trump + numberOfMovedVotes) AS newTrumpVote
+        FROM pennacopy L1, (SELECT DISTINCT timestamp FROM pennacopy WHERE timestamp >= Timest) L2
+        WHERE L1.precinct = precinctName AND L1.timestamp = L2.timestamp;
+	ELSEIF (CoreCandidate = 'Trump') THEN 
+		SELECT precinct, L1.timestamp, (Trump - numberOfMovedVotes) AS newRemovedTrumpVotes, (Biden + numberOfMovedVotes) AS newBidenVote
+        FROM pennacopy L1, (SELECT DISTINCT timestamp FROM pennacopy WHERE timestamp >= Timest) L2
+        WHERE L1.precinct = precinctName AND L1.timestamp = L2.timestamp;
+	ELSE
+		SELECT "Wrong Candidate" AS "Error Input"; 
+	END IF ; 
+END $$
+DELIMITER ;  
